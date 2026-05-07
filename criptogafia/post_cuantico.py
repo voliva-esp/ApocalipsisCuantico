@@ -29,12 +29,23 @@ def cifrar_mensaje(llave, texto):
     return iv, cifrado, encryptor.tag
 
 
+def descifrar_mensaje(llave, iv, datos_cifrados, tag):
+    """ Función para que el receptor recupere el texto original """
+    decryptor = Cipher(algorithms.AES(llave), modes.GCM(iv, tag)).decryptor()
+    try:
+        texto_claro = decryptor.update(datos_cifrados) + decryptor.finalize()
+        return texto_claro.decode()
+    except Exception:
+        return "[ERROR] No se pudo descifrar. ¿Llave incorrecta?"
+
+
 # --- INICIO DE LA SIMULACIÓN ---
 ALGO_PQ = "Kyber512"
 print(f"--- SIMULACIÓN iMessage PQ3 (Nivel 3) ---")
 
 # ESTADO INICIAL: Handshake Nivel 2
 llave_actual = os.urandom(32)                           # Imaginemos que ya hicimos el primer intercambio
+llave_receptor = llave_actual
 print(f"[Sistema] Conversación iniciada. Llave inicial: {llave_actual.hex()[:10]}...")
 
 # ENVIANDO MENSAJES...
@@ -51,15 +62,19 @@ for i, m in enumerate(mensajes):
             pk_n = receptor.generate_keypair()
             # El emisor encapsula un nuevo secreto
             with oqs.KeyEncapsulation(ALGO_PQ) as emisor:
-                ct_n, secreto_n = emisor.encap_secret(pk_n)
+                ct_n, secreto_emisor = emisor.encap_secret(pk_n)
+            # El emisor actualiza su llave, basada en Kyber
+            llave_actual = derivar_nueva_llave(llave_actual, secreto_emisor)
 
-            # EVOLUCIÓN: La llave vieja muere, nace una nueva basada en Kyber
-            llave_actual = derivar_nueva_llave(llave_actual, secreto_n)
-            print(f"[PQ3] Nueva llave de nivel 3 generada: {llave_actual.hex()[:10]}...")
+            # El receptor decapsula → obtiene el mismo secreto que el emisor
+            secreto_receptor = receptor.decap_secret(ct_n)
+            llave_receptor = derivar_nueva_llave(llave_receptor, secreto_receptor)
+        print(f"[PQ3] Nueva llave de nivel 3 generada: {llave_actual.hex()[:10]}...")
 
     # Cifrado del mensaje con la llave del momento
     iv, ct, tag = cifrar_mensaje(llave_actual, m)
     print(f" -> Enviando Mensaje {i + 1} (Cifrado): {ct.hex()[:20]}...")
+    print(f"[Receptor] Recibido el mensaje: {descifrar_mensaje(llave_receptor, iv, ct, tag)}")
 
 print("\n[Conclusión] Si un atacante robara la llave del Mensaje 1, no podría leer el Mensaje 3, porque el protocolo "
       "ya ha 'sanado' la conexión.")
